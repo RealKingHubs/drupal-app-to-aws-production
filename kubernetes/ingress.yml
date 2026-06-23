@@ -1,0 +1,24 @@
+# ============================================================
+# Ingress - mirrors the ALB from Phase 1 (Terraform)
+# Routes external HTTP traffic to the Nginx service
+# Requires the Nginx ingress controller installed in Kind
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: drupal-ingress
+  namespace: drupal
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-service
+                port:
+                  number: 80

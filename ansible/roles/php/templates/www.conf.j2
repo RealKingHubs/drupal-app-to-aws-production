@@ -1,0 +1,27 @@
+; ============================================================
+; PHP-FPM pool config - tuned conservatively for t2.micro
+; (1 vCPU, 1GB RAM), since this runs on free tier instances
+; ============================================================
+[www]
+user = www-data
+group = www-data
+
+listen = /run/php/php{{ php_version }}-fpm.sock
+listen.owner = www-data
+listen.group = www-data
+listen.mode = 0660
+
+; Conservative process limits - t2.micro only has 1GB RAM total
+pm = dynamic
+pm.max_children = 6
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+pm.max_requests = 500
+
+; Slow log to help diagnose performance issues
+slowlog = /var/log/php{{ php_version }}-fpm-slow.log
+request_slowlog_timeout = 10s
+
+php_admin_value[error_log] = /var/log/php{{ php_version }}-fpm-error.log
+php_admin_flag[log_errors] = on

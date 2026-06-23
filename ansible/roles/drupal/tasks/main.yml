@@ -1,0 +1,171 @@
+# ============================================================
+# Drupal Role - installs Drupal via Composer, configures the
+# database connection to the RDS primary, runs site install
+#
+# COMPOSER_ALLOW_SUPERUSER=1 is set explicitly because Composer
+# silently skips plugin execution (including the scaffold step
+# that creates web/index.php and web/sites/default) when run
+# as root without this flag, even though the command itself
+# reports success. An explicit scaffold step and verification
+# guard against this exact silent failure.
+# ============================================================
+
+- name: Install Composer dependencies (unzip, php-cli already present)
+  ansible.builtin.apt:
+    name: php{{ php_version }}-xml
+    state: present
+  become: true
+
+- name: Download Composer installer
+  ansible.builtin.get_url:
+    url: https://getcomposer.org/installer
+    dest: /tmp/composer-setup.php
+    mode: '0644'
+  become: true
+
+- name: Install Composer globally
+  ansible.builtin.command:
+    cmd: php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer
+    creates: /usr/local/bin/composer
+  become: true
+
+- name: Create Drupal root directory
+  ansible.builtin.file:
+    path: "{{ drupal_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+
+- name: Check if Drupal is already downloaded
+  ansible.builtin.stat:
+    path: "{{ drupal_web_root }}/index.php"
+  register: drupal_composer_json
+  become: true
+
+- name: Wipe any incomplete prior install before retrying
+  ansible.builtin.command:
+    cmd: find {{ drupal_root }} -mindepth 1 -delete
+  become: true
+  when: not drupal_composer_json.stat.exists
+
+- name: Create Drupal project via Composer (only runs once)
+  ansible.builtin.command:
+    cmd: >
+      composer create-project drupal/recommended-project {{ drupal_root }}
+      --no-interaction --prefer-dist
+  become: true
+  when: not drupal_composer_json.stat.exists
+  async: 900
+  poll: 20
+  environment:
+    COMPOSER_ALLOW_SUPERUSER: "1"
+
+- name: Install Drush via Composer (Drupal CLI tool)
+  ansible.builtin.command:
+    cmd: composer require drush/drush --no-interaction
+    chdir: "{{ drupal_root }}"
+  become: true
+  changed_when: true
+  async: 300
+  poll: 15
+  environment:
+    COMPOSER_ALLOW_SUPERUSER: "1"
+
+- name: Explicitly run Composer scaffold step in case it did not auto-run
+  ansible.builtin.command:
+    cmd: composer drupal:scaffold --no-interaction
+    chdir: "{{ drupal_root }}"
+  become: true
+  register: scaffold_result
+  changed_when: "'Nothing to scaffold' not in scaffold_result.stdout"
+  failed_when: false
+  environment:
+    COMPOSER_ALLOW_SUPERUSER: "1"
+
+- name: Verify Drupal web root actually exists now
+  ansible.builtin.stat:
+    path: "{{ drupal_web_root }}/index.php"
+  register: drupal_web_root_check
+  become: true
+  failed_when: not drupal_web_root_check.stat.exists
+
+- name: Check if Drupal is already installed (settings.php exists and is configured)
+  ansible.builtin.stat:
+    path: "{{ drupal_web_root }}/sites/default/settings.php"
+  register: drupal_settings_file
+  become: true
+
+- name: Ensure sites/default is writable for initial setup
+  ansible.builtin.file:
+    path: "{{ drupal_web_root }}/sites/default"
+    owner: root
+    group: root
+    mode: '0775'
+  become: true
+
+- name: Copy default.settings.php to settings.php if not present
+  ansible.builtin.copy:
+    src: "{{ drupal_web_root }}/sites/default/default.settings.php"
+    dest: "{{ drupal_web_root }}/sites/default/settings.php"
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  when: not drupal_settings_file.stat.exists
+
+- name: Create sites/default/files directory for uploads
+  ansible.builtin.file:
+    path: "{{ drupal_web_root }}/sites/default/files"
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0775'
+  become: true
+
+- name: Run Drupal site install via Drush (only if not already installed)
+  ansible.builtin.command:
+    cmd: >
+      vendor/bin/drush site:install standard
+      --db-url=mysql://{{ drupal_db_user }}:{{ drupal_db_password }}@{{ drupal_db_host }}:{{ drupal_db_port }}/{{ drupal_db_name }}
+      --site-name="{{ drupal_site_name }}"
+      --account-name={{ drupal_admin_user }}
+      --account-pass={{ drupal_admin_password }}
+      --account-mail={{ drupal_admin_email }}
+      --yes
+    chdir: "{{ drupal_root }}"
+  become: true
+  when: inventory_hostname == (groups["all"] | sort | first)
+  register: drupal_install_result
+  failed_when: drupal_install_result.rc != 0 and 'already installed' not in drupal_install_result.stderr
+  changed_when: "'already installed' not in drupal_install_result.stderr"
+  no_log: false
+  async: 300
+  poll: 15
+
+- name: Set correct ownership on the entire Drupal tree
+  ansible.builtin.file:
+    path: "{{ drupal_root }}"
+    owner: www-data
+    group: www-data
+    recurse: true
+    state: directory
+  become: true
+
+- name: Lock down settings.php permissions after install
+  ansible.builtin.file:
+    path: "{{ drupal_web_root }}/sites/default/settings.php"
+    owner: www-data
+    group: www-data
+    mode: '0444'
+  become: true
+
+- name: Set up a cron job for Drupal's scheduled tasks
+  ansible.builtin.cron:
+    name: "Drupal cron"
+    minute: "*/15"
+    user: www-data
+    job: "cd {{ drupal_root }} && vendor/bin/drush cron > /dev/null 2>&1"
+  become: true

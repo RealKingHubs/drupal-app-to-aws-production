@@ -1,0 +1,21 @@
+; ============================================================
+; PHP settings recommended by Drupal, sized for t2.micro
+; ============================================================
+memory_limit = 256M
+upload_max_filesize = 64M
+post_max_size = 64M
+max_execution_time = 120
+max_input_time = 120
+max_input_vars = 5000
+
+; OPcache - significantly improves Drupal performance
+opcache.enable = 1
+opcache.memory_consumption = 96
+opcache.interned_strings_buffer = 8
+opcache.max_accelerated_files = 10000
+opcache.revalidate_freq = 60
+opcache.validate_timestamps = 1
+
+; Sessions
+session.gc_maxlifetime = 86400
+session.cookie_httponly = 1

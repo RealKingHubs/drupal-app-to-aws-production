@@ -1,0 +1,84 @@
+# ============================================================
+# Filesync Role - keeps sites/default/files in sync between
+# both app servers using rsync over SSH, since we are not
+# using EFS (no free tier) for this project.
+#
+# Strategy: every server pulls from every OTHER server's
+# files directory every 5 minutes via cron. Last-write-wins.
+# This is good enough for a demo project, documented as a
+# trade-off vs a real shared filesystem in production.
+# ============================================================
+
+- name: Generate SSH key for www-data user (used for inter-server rsync)
+  ansible.builtin.user:
+    name: www-data
+    shell: /bin/bash
+    create_home: true
+  become: true
+
+- name: Create .ssh directory for www-data
+  ansible.builtin.file:
+    path: /var/www/.ssh
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0700'
+  become: true
+
+- name: Generate SSH keypair for www-data if not present
+  community.crypto.openssh_keypair:
+    path: /var/www/.ssh/id_rsa
+    type: rsa
+    size: 2048
+    owner: www-data
+    group: www-data
+    mode: '0600'
+  become: true
+  register: filesync_keypair
+
+- name: Fetch the public key so we can distribute it to all peers
+  ansible.builtin.slurp:
+    src: /var/www/.ssh/id_rsa.pub
+  become: true
+  register: filesync_pubkey
+
+- name: Build a fact containing this host's public key, for cross-host sharing
+  ansible.builtin.set_fact:
+    my_filesync_pubkey: "{{ filesync_pubkey.content | b64decode }}"
+
+- name: Add all app server public keys to each host's authorized_keys
+  ansible.posix.authorized_key:
+    user: www-data
+    key: "{{ hostvars[item].my_filesync_pubkey }}"
+    state: present
+  loop: "{{ groups['all'] }}"
+  when: hostvars[item].my_filesync_pubkey is defined
+  become: true
+
+- name: Disable strict host key checking for www-data SSH (internal VPC traffic only)
+  ansible.builtin.copy:
+    dest: /var/www/.ssh/config
+    owner: www-data
+    group: www-data
+    mode: '0600'
+    content: |
+      Host *
+        StrictHostKeyChecking no
+        UserKnownHostsFile /dev/null
+
+- name: Deploy the rsync peer-sync script
+  ansible.builtin.template:
+    src: sync-files.sh.j2
+    dest: /usr/local/bin/drupal-sync-files.sh
+    owner: www-data
+    group: www-data
+    mode: '0750'
+  become: true
+
+- name: Schedule the file sync cron job every 5 minutes
+  ansible.builtin.cron:
+    name: "Drupal file sync between app servers"
+    minute: "*/5"
+    user: www-data
+    job: "/usr/local/bin/drupal-sync-files.sh >> /var/log/drupal-filesync.log 2>&1"
+  become: true

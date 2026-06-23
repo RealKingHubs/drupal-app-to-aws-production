@@ -1,0 +1,62 @@
+# ============================================================
+# Main Playbook - Phase 2
+# Run with: ansible-playbook -i inventory/aws_ec2.yml site.yml
+#
+# Designed to be fully idempotent and safe to re-run any
+# number of times, including against a completely fresh
+# infrastructure rebuild (terraform destroy + apply), without
+# any manual intervention.
+# ============================================================
+
+- name: Configure Drupal application servers
+  hosts: all
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Wait for SSM connectivity and cloud-init to finish
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Gather private IP for use in filesync role
+      ansible.builtin.set_fact:
+        private_ip_address: "{{ ansible_default_ipv4.address }}"
+
+  roles:
+    - common
+    - php
+    - nginx
+    - drupal
+    - filesync
+
+  post_tasks:
+    # Nginx's document root (the Drupal web root) does not exist
+    # until the drupal role completes. An earlier reload against
+    # a not-yet-existing root can leave worker processes in a
+    # stale state. An unconditional restart here, after Drupal
+    # is fully in place, guarantees clean workers every run,
+    # without depending on Ansible's changed/notify detection.
+    - name: Restart Nginx unconditionally now that Drupal is fully installed
+      ansible.builtin.systemd:
+        name: nginx
+        state: restarted
+      become: true
+
+    - name: Restart PHP-FPM unconditionally for the same reason
+      ansible.builtin.systemd:
+        name: "php{{ php_version }}-fpm"
+        state: restarted
+      become: true
+
+    - name: Verify the /health endpoint responds locally
+      ansible.builtin.uri:
+        url: "http://localhost/health"
+        status_code: 200
+      register: health_check
+      retries: 10
+      delay: 6
+      until: health_check.status == 200
+
+    - name: Show health check result
+      ansible.builtin.debug:
+        msg: "Health check passed on {{ inventory_hostname }}: {{ health_check.status }}"

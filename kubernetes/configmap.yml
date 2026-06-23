@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: drupal-config
+  namespace: drupal
+data:
+  DRUPAL_DB_HOST: "mysql-service"
+  DRUPAL_DB_PORT: "3306"
+  DRUPAL_DB_NAME: "drupal_db"
+  DRUPAL_DB_USER: "drupal_admin"
+  DRUPAL_SITE_NAME: "Drupal AWS Portfolio Project"

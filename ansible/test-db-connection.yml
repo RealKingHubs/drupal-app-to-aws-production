@@ -1,0 +1,35 @@
+# ============================================================
+# DB Connectivity Test Playbook
+# Run this BEFORE the main site.yml to confirm app servers
+# can actually reach RDS before attempting a full Drupal
+# install. Saves time diagnosing failures.
+#
+# Run with: ansible-playbook test-db-connection.yml
+# ============================================================
+
+- name: Test database connectivity from app servers
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Install mysql client for testing
+      ansible.builtin.apt:
+        name: mysql-client
+        state: present
+        update_cache: true
+
+    - name: Test connection to RDS primary
+      ansible.builtin.command:
+        cmd: >
+          mysql -h {{ drupal_db_host }} -P {{ drupal_db_port }}
+          -u {{ drupal_db_user }} -p{{ drupal_db_password }}
+          -e "SELECT 1;"
+      register: db_test_result
+      changed_when: false
+      no_log: true
+
+    - name: Report result
+      ansible.builtin.debug:
+        msg: "Database connection from {{ inventory_hostname }} succeeded"
+      when: db_test_result.rc == 0

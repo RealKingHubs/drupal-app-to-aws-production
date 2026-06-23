@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: drupal
+data:
+  drupal.conf: |
+    server {
+        listen 80;
+        server_name _;
+        root /var/www/html/web;
+        index index.php index.html;
+
+        location = /health {
+            access_log off;
+            default_type text/plain;
+            return 200 "OK\n";
+        }
+
+        location / {
+            try_files $uri /index.php?$query_string;
+        }
+
+        location ~ \.php$ {
+            fastcgi_split_path_info ^(.+\.php)(/.+)$;
+            fastcgi_pass drupal-service:9000;
+            fastcgi_index index.php;
+            include fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            fastcgi_param PATH_INFO $fastcgi_path_info;
+            fastcgi_read_timeout 120;
+        }
+
+        location ~ ^/sites/.*/private/ { deny all; }
+        location ~ (^|/)\. { deny all; }
+        client_max_body_size 64M;
+    }

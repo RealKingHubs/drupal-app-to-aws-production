@@ -1,0 +1,23 @@
+#!/bin/bash
+# ============================================================
+# Pulls sites/default/files from every other app server in
+# the inventory, keeping uploaded files in sync across the
+# Auto Scaling Group without needing a shared filesystem.
+# Runs as www-data via cron every 5 minutes.
+# ============================================================
+
+set -euo pipefail
+
+FILES_DIR="{{ filesync_path }}"
+
+{% for host in groups['all'] %}
+{% if hostvars[host].ansible_host is defined and host != inventory_hostname %}
+# Sync from {{ host }}
+rsync -az --timeout=30 \
+  -e "ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no" \
+  "www-data@{{ hostvars[host].private_ip_address | default(hostvars[host].ansible_host) }}:${FILES_DIR}/" \
+  "${FILES_DIR}/" 2>&1 || echo "Sync from {{ host }} failed, will retry next cycle"
+{% endif %}
+{% endfor %}
+
+echo "Sync cycle completed at $(date)"

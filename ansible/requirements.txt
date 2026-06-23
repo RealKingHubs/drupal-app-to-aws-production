@@ -1,0 +1,8 @@
+# ============================================================
+# Python packages required for Ansible's AWS dynamic inventory
+# and SSM connection plugin to work.
+# Install with: pip install -r requirements.txt
+# ============================================================
+boto3>=1.34.0
+botocore>=1.34.0
+session-manager-plugin

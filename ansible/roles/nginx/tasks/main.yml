@@ -1,0 +1,49 @@
+# ============================================================
+# Nginx Role - reverse proxy to PHP-FPM, serves Drupal
+# Includes the /health endpoint the ALB target group checks.
+# This is the file that, once applied, turns the 502 into a
+# working response.
+# ============================================================
+
+- name: Install Nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+    update_cache: true
+  become: true
+
+- name: Remove default Nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  become: true
+  notify: reload nginx
+
+- name: Deploy Drupal Nginx site config
+  ansible.builtin.template:
+    src: drupal.conf.j2
+    dest: /etc/nginx/sites-available/drupal.conf
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: reload nginx
+
+- name: Enable the Drupal Nginx site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/drupal.conf
+    dest: /etc/nginx/sites-enabled/drupal.conf
+    state: link
+  become: true
+  notify: reload nginx
+
+- name: Test Nginx config syntax before applying
+  ansible.builtin.command: nginx -t
+  become: true
+  changed_when: false
+
+- name: Ensure Nginx is started and enabled
+  ansible.builtin.systemd:
+    name: nginx
+    state: started
+    enabled: true

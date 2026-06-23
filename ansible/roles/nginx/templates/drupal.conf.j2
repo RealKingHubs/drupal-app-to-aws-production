@@ -1,0 +1,68 @@
+# ============================================================
+# Nginx config for Drupal 10
+# Includes /health endpoint for the ALB target group check.
+# This is plain text, no PHP, no DB call - so a healthy
+# response only means "Nginx is up," which is exactly what
+# the ALB needs to know to route traffic here.
+# ============================================================
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name _;
+
+    root {{ drupal_web_root }};
+    index index.php index.html;
+
+    # ALB health check endpoint - returns 200 instantly, no PHP involved.
+    # This is the fix for the 502 you saw before Phase 2 ran.
+    location = /health {
+        access_log off;
+        default_type text/plain;
+        return 200 "OK\n";
+    }
+
+    # Drupal's standard clean URL handling
+    location / {
+        try_files $uri /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+        fastcgi_pass unix:/run/php/php{{ php_version }}-fpm.sock;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_param PATH_INFO $fastcgi_path_info;
+        fastcgi_read_timeout 120;
+    }
+
+    # Deny access to sensitive Drupal files and directories
+    location ~ ^/sites/.*/private/ {
+        deny all;
+    }
+
+    location ~ (^|/)\. {
+        deny all;
+    }
+
+    location ~ ^/sites/[^/]+/settings.*\.php$ {
+        deny all;
+    }
+
+    # Static asset caching
+    location ~* \.(js|css|gif|jpg|jpeg|png|svg|woff|woff2|ttf|ico)$ {
+        try_files $uri @rewrite;
+        expires 30d;
+        access_log off;
+    }
+
+    location @rewrite {
+        rewrite ^ /index.php;
+    }
+
+    client_max_body_size 64M;
+
+    access_log /var/log/nginx/drupal-access.log;
+    error_log /var/log/nginx/drupal-error.log;
+}

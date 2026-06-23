@@ -1,0 +1,57 @@
+# ============================================================
+# PHP Role - PHP-FPM with all extensions Drupal 10 requires
+# ============================================================
+
+- name: Add PHP repository (Ondrej Sury PPA - standard for Ubuntu)
+  ansible.builtin.apt_repository:
+    repo: "ppa:ondrej/php"
+    state: present
+  become: true
+
+- name: Install PHP-FPM and required extensions for Drupal 10
+  ansible.builtin.apt:
+    name:
+      - "php{{ php_version }}-fpm"
+      - "php{{ php_version }}-mysql"
+      - "php{{ php_version }}-gd"
+      - "php{{ php_version }}-xml"
+      - "php{{ php_version }}-mbstring"
+      - "php{{ php_version }}-curl"
+      - "php{{ php_version }}-zip"
+      - "php{{ php_version }}-bcmath"
+      - "php{{ php_version }}-intl"
+      - "php{{ php_version }}-opcache"
+      - "php{{ php_version }}-cli"
+      - "php{{ php_version }}-common"
+      - "php{{ php_version }}-readline"
+    state: present
+    update_cache: true
+  become: true
+  notify: restart php-fpm
+
+- name: Configure PHP-FPM pool settings for Drupal workload
+  ansible.builtin.template:
+    src: www.conf.j2
+    dest: "/etc/php/{{ php_version }}/fpm/pool.d/www.conf"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: restart php-fpm
+
+- name: Configure php.ini for Drupal recommended settings
+  ansible.builtin.template:
+    src: php-drupal.ini.j2
+    dest: "/etc/php/{{ php_version }}/fpm/conf.d/99-drupal.ini"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: restart php-fpm
+
+- name: Ensure PHP-FPM is started and enabled
+  ansible.builtin.systemd:
+    name: "php{{ php_version }}-fpm"
+    state: started
+    enabled: true
+  become: true

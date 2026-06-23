@@ -1,0 +1,57 @@
+# ============================================================
+# Common Role - Base system preparation
+# Runs on every app server before anything else
+# ============================================================
+
+- name: Wait for any existing apt/dpkg lock to clear (unattended-upgrades can hold it on boot)
+  ansible.builtin.shell: |
+    while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+      sleep 5
+    done
+  become: true
+  changed_when: false
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  become: true
+
+- name: Upgrade all packages to latest
+  ansible.builtin.apt:
+    upgrade: dist
+  become: true
+  async: 600
+  poll: 15
+
+- name: Install base utility packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - unzip
+      - git
+      - rsync
+      - software-properties-common
+      - ca-certificates
+      - gnupg
+      - lsb-release
+      - python3-pip
+      - python3-pymysql
+      - cron
+      - acl
+    state: present
+  become: true
+
+- name: Ensure timezone is set to UTC for consistent logs
+  community.general.timezone:
+    name: UTC
+  become: true
+
+- name: Create the www-data home directory if missing
+  ansible.builtin.file:
+    path: /var/www
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0755'
+  become: true

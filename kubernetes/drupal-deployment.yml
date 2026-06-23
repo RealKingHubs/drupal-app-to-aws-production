@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drupal
+  namespace: drupal
+  labels:
+    app: drupal
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: drupal
+  template:
+    metadata:
+      labels:
+        app: drupal
+    spec:
+      initContainers:
+        # Wait for MySQL to be ready before starting Drupal
+        - name: wait-for-mysql
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z mysql-service 3306; do
+                echo "Waiting for MySQL..."
+                sleep 5
+              done
+              echo "MySQL is ready"
+      containers:
+        - name: drupal-fpm
+          image: drupal-custom:latest
+          imagePullPolicy: Never  # Use local image built by kind load
+          ports:
+            - containerPort: 9000
+          env:
+            - name: DRUPAL_DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: drupal-config
+                  key: DRUPAL_DB_HOST
+            - name: DRUPAL_DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: drupal-config
+                  key: DRUPAL_DB_PORT
+            - name: DRUPAL_DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: drupal-config
+                  key: DRUPAL_DB_NAME
+            - name: DRUPAL_DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: drupal-config
+                  key: DRUPAL_DB_USER
+            - name: DRUPAL_DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: drupal-secret
+                  key: DRUPAL_DB_PASS
+          volumeMounts:
+            - name: drupal-files
+              mountPath: /var/www/html/web/sites/default/files
+          readinessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: drupal-files
+          persistentVolumeClaim:
+            claimName: drupal-files-pvc

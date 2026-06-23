@@ -1,0 +1,32 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfstate.lock.info
+.terraform.lock.hcl
+terraform.tfvars
+*.auto.tfvars
+crash.log
+tfplan.out
+errored.tfstate
+
+# Secrets
+*.pem
+*.key
+.env
+.env.*
+ansible/group_vars/all.yml
+
+# Docker
+docker/settings.php
+
+# Ansible
+*.retry
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
