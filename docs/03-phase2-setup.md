@@ -10,6 +10,7 @@ servers (since we are not using EFS).
 By the end of this phase, your ALB target group should show both instances
 as healthy, and the 502 error becomes a working Drupal site.
 
+
 ---
 
 ## Install Ansible Galaxy collections

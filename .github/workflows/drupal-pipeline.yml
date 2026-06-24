@@ -292,19 +292,21 @@ jobs:
       - name: Get all production instances
         id: production_nodes
         run: |
+          # Keep them space-separated so bash loops and native CLI arguments read them cleanly
           INSTANCE_IDS=$(aws ec2 describe-instances \
             --filters \
               "Name=tag:Name,Values=drupal-aws-production-app" \
               "Name=instance-state-name,Values=running" \
             --query "Reservations[].Instances[].InstanceId" \
-            --output text | tr '\t' ',')
+            --output text)
           echo "ids=$INSTANCE_IDS" >> $GITHUB_OUTPUT
           echo "Target Production Nodes: $INSTANCE_IDS"
 
       - name: Deploy to all production app servers via SSM
         run: |
+          # Passing the variable without quotes lets the CLI read them as individual parameters
           aws ssm send-command \
-            --instance-ids "${{ steps.production_nodes.outputs.ids }}" \
+            --instance-ids ${{ steps.production_nodes.outputs.ids }} \
             --document-name "AWS-RunShellScript" \
             --parameters commands="[
               'cd /var/www/html/drupal',
@@ -320,8 +322,8 @@ jobs:
           COMMAND_ID=$(cat /tmp/prod_command_id.txt)
           echo "Production Command ID: $COMMAND_ID"
 
-          # Target array validation check loops
-          FIRST_NODE=$(echo "${{ steps.production_nodes.outputs.ids }}" | cut -d',' -f1)
+          # Grabs the first ID out of the space-separated list to track status
+          FIRST_NODE=$(echo "${{ steps.production_nodes.outputs.ids }}" | awk '{print $1}')
           
           for i in $(seq 1 45); do
             STATUS=$(aws ssm get-command-invocation \
