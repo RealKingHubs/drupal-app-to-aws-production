@@ -152,8 +152,7 @@ jobs:
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health)
           if [ "$HTTP_STATUS" = "200" ]; then
             echo "Health check passed: $HTTP_STATUS"
-          else
-            echo "Health check failed: $HTTP_STATUS"
+          else            echo "Health check failed: $HTTP_STATUS"
             docker compose logs
             exit 1
           fi
@@ -162,8 +161,7 @@ jobs:
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/)
           if [ "$HTTP_STATUS" = "200" ]; then
             echo "Drupal homepage passed: $HTTP_STATUS"
-          else
-            echo "Drupal homepage failed: $HTTP_STATUS"
+          else            echo "Drupal homepage failed: $HTTP_STATUS"
             exit 1
           fi
 
@@ -253,6 +251,90 @@ jobs:
               break
             elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "TimedOut" ]; then
               echo "Deployment failed with status: $STATUS"
+              exit 1
+            fi
+            sleep 10
+          done
+
+  # ============================================================
+  # Job 4: Deploy to Production
+  # Pauses for manual review and approval in GitHub UI
+  # ============================================================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    environment:
+      name: production
+      url: http://${{ env.ALB_URL }}
+
+    env:
+      ALB_URL: ${{ secrets.ALB_DNS_NAME }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install AWS Session Manager plugin
+        run: |
+          curl -s "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" \
+            -o session-manager-plugin.deb
+          sudo dpkg -i session-manager-plugin.deb
+
+      - name: Get all production instances
+        id: production_nodes
+        run: |
+          INSTANCE_IDS=$(aws ec2 describe-instances \
+            --filters \
+              "Name=tag:Name,Values=drupal-aws-production-app" \
+              "Name=instance-state-name,Values=running" \
+            --query "Reservations[].Instances[].InstanceId" \
+            --output text | tr '\t' ',')
+          echo "ids=$INSTANCE_IDS" >> $GITHUB_OUTPUT
+          echo "Target Production Nodes: $INSTANCE_IDS"
+
+      - name: Deploy to all production app servers via SSM
+        run: |
+          aws ssm send-command \
+            --instance-ids "${{ steps.production_nodes.outputs.ids }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters commands="[
+              'cd /var/www/html/drupal',
+              'sudo -u www-data composer install --no-interaction --prefer-dist',
+              'sudo -u www-data vendor/bin/drush updatedb --yes',
+              'sudo -u www-data vendor/bin/drush cache:rebuild',
+              'sudo systemctl reload nginx'
+            ]" \
+            --comment "Production release from GitHub Actions - ${{ github.sha }}" \
+            --output text \
+            --query "Command.CommandId" > /tmp/prod_command_id.txt
+
+          COMMAND_ID=$(cat /tmp/prod_command_id.txt)
+          echo "Production Command ID: $COMMAND_ID"
+
+          # Target array validation check loops
+          FIRST_NODE=$(echo "${{ steps.production_nodes.outputs.ids }}" | cut -d',' -f1)
+          
+          for i in $(seq 1 45); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$FIRST_NODE" \
+              --query "Status" --output text 2>/dev/null || echo "Pending")
+            
+            echo "Production Deployment Status tracking node $FIRST_NODE: $STATUS"
+            if [ "$STATUS" = "Success" ]; then
+              echo "Production deployment executed cleanly!"
+              break
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "TimedOut" ]; then
+              echo "Production deployment runtime error encountered: $STATUS"
               exit 1
             fi
             sleep 10

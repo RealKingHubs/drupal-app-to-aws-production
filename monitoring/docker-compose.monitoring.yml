@@ -1,4 +1,5 @@
 # ============================================================
+#
 # Monitoring Stack - runs locally, zero AWS cost
 # Prometheus scrapes EC2 instances remotely via node exporter
 # Grafana connects to Prometheus for dashboards
@@ -12,6 +13,7 @@
 #   Grafana:       http://localhost:3000  (admin/admin123)
 #   Prometheus:    http://localhost:9090
 #   Alertmanager:  http://localhost:9093
+#
 # ============================================================
 
 services:
