@@ -1,0 +1,77 @@
+# ============================================================
+# ELK Stack - Centralized Logging
+# Runs locally. EC2 instances ship logs via Filebeat.
+# Logstash receives, parses, and forwards to Elasticsearch.
+# Kibana provides the UI for searching and visualizing logs.
+#
+# Usage:
+#   cd logging
+#   docker compose -f docker-compose.logging.yml up -d
+#
+# Access:
+#   Kibana:         http://localhost:5601
+#   Elasticsearch:  http://localhost:9200
+# ============================================================
+
+services:
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    container_name: drupal-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - logging
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.13.0
+    container_name: drupal-logstash
+    restart: unless-stopped
+    volumes:
+      - ./logstash/pipeline.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+    ports:
+      - "5044:5044"
+      - "5045:5044"
+      - "5000:5000/udp"
+    networks:
+      - logging
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      LS_JAVA_OPTS: "-Xms256m -Xmx256m"
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.13.0
+    container_name: drupal-kibana
+    restart: unless-stopped
+    ports:
+      - "5601:5601"
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    networks:
+      - logging
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+volumes:
+  elasticsearch_data:
+    driver: local
+
+networks:
+  logging:
+    driver: bridge

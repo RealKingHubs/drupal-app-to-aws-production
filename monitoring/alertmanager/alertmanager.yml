@@ -1,0 +1,23 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by:
+    - alertname
+    - instance
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: email-alerts
+
+receivers:
+  - name: email-alerts
+    email_configs:
+      - to: odokingsleyu@gmail.com
+        from: alerts@drupal-aws.local
+        smarthost: smtp.gmail.com:587
+        auth_username: odokingsleyu@gmail.com
+        auth_password: YOUR_APP_PASSWORD
+        send_resolved: true
+        headers:
+          Subject: "[{{ .Status | toUpper }}] {{ .CommonAnnotations.summary }}"

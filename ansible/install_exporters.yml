@@ -1,0 +1,88 @@
+- name: Install and configure Prometheus Exporters
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    # --- NODE EXPORTER SETUP ---
+    - name: Download Node Exporter
+      ansible.builtin.get_url:
+        url: https://github.com/prometheus/node_exporter/releases/download/v1.8.1/node_exporter-1.8.1.linux-amd64.tar.gz
+        dest: /tmp/node_exporter.tar.gz
+        mode: '0644'
+
+    - name: Extract Node Exporter
+      ansible.builtin.unarchive:
+        src: /tmp/node_exporter.tar.gz
+        dest: /tmp
+        remote_src: true
+
+    - name: Move Node Exporter binary
+      ansible.builtin.copy:
+        src: /tmp/node_exporter-1.8.1.linux-amd64/node_exporter
+        dest: /usr/local/bin/node_exporter
+        mode: '0755'
+        remote_src: true
+
+    - name: Create Node Exporter Systemd Service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/node_exporter.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Node Exporter
+          After=network.target
+
+          [Service]
+          User=root
+          ExecStart=/usr/local/bin/node_exporter
+
+          [Install]
+          WantedBy=multi-user.target
+
+    # --- NGINX EXPORTER SETUP ---
+    - name: Download Nginx Prometheus Exporter
+      ansible.builtin.get_url:
+        url: https://github.com/nginxinc/nginx-prometheus-exporter/releases/download/v1.1.0/nginx-prometheus-exporter_1.1.0_linux_amd64.tar.gz
+        dest: /tmp/nginx_exporter.tar.gz
+        mode: '0644'
+
+    - name: Extract Nginx Exporter
+      ansible.builtin.unarchive:
+        src: /tmp/nginx_exporter.tar.gz
+        dest: /tmp
+        remote_src: true
+
+    - name: Move Nginx Exporter binary
+      ansible.builtin.copy:
+        src: /tmp/nginx-prometheus-exporter
+        dest: /usr/local/bin/nginx_exporter
+        mode: '0755'
+        remote_src: true
+
+    - name: Create Nginx Exporter Systemd Service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/nginx_exporter.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Nginx Prometheus Exporter
+          After=network.target
+
+          [Service]
+          User=root
+          ExecStart=/usr/local/bin/nginx_exporter -nginx.scrape-uri=http://127.0.0.1/nginx_status
+
+          [Install]
+          WantedBy=multi-user.target
+
+    # --- START SERVICES ---
+    - name: Start and enable exporter services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+        daemon_reload: true
+      loop:
+        - node_exporter
+        - nginx_exporter

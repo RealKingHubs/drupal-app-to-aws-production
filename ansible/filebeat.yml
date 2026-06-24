@@ -1,0 +1,100 @@
+# ============================================================
+# Filebeat Playbook
+# Installs Filebeat on all EC2 instances.
+# Ships Nginx and Drupal logs to Logstash on your laptop
+# via SSM port forwarding tunnel.
+#
+# Before running this playbook, start the Logstash tunnel:
+# aws ssm start-session --target INSTANCE_ID \
+#   --document-name AWS-StartPortForwardingSessionToRemoteHost \
+#   --parameters hostName=YOUR_LAPTOP_IP,portNumber=5044,localPortNumber=5044
+# ============================================================
+
+- name: Install Filebeat on all app servers
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    logstash_host: "197.149.93.57"  # Replace with your laptop's public IP address
+    logstash_port: 5044
+
+  tasks:
+
+    - name: Add Elastic GPG key
+      ansible.builtin.apt_key:
+        url: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+        state: present
+
+    - name: Add Elastic repository
+      ansible.builtin.apt_repository:
+        repo: "deb https://artifacts.elastic.co/packages/8.x/apt stable main"
+        state: present
+
+    - name: Install Filebeat
+      ansible.builtin.apt:
+        name: filebeat
+        state: present
+        update_cache: true
+
+    - name: Deploy Filebeat config
+      ansible.builtin.copy:
+        dest: /etc/filebeat/filebeat.yml
+        mode: '0644'
+        content: |
+          filebeat.inputs:
+
+            - type: log
+              enabled: true
+              paths:
+                - /var/log/nginx/drupal-access.log
+              fields:
+                log_type: nginx_access
+              fields_under_root: false
+
+            - type: log
+              enabled: true
+              paths:
+                - /var/log/nginx/drupal-error.log
+              fields:
+                log_type: nginx_error
+              fields_under_root: false
+
+            - type: log
+              enabled: true
+              paths:
+                - /var/log/drupal-bootstrap.log
+              fields:
+                log_type: drupal
+              fields_under_root: false
+
+          output.logstash:
+            hosts:
+              - "{{ logstash_host }}:{{ logstash_port }}"
+
+          processors:
+            - add_host_metadata: ~
+            - add_cloud_metadata: ~
+
+          logging.level: info
+          logging.to_files: true
+          logging.files:
+            path: /var/log/filebeat
+            name: filebeat
+            keepfiles: 3
+
+    - name: Start and enable Filebeat
+      ansible.builtin.systemd:
+        name: filebeat
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Verify Filebeat is running
+      ansible.builtin.command: filebeat test config -e
+      changed_when: false
+      register: filebeat_test
+
+    - name: Show Filebeat status
+      ansible.builtin.debug:
+        msg: "Filebeat is running on {{ inventory_hostname }}"

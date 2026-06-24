@@ -1,0 +1,255 @@
+# ============================================================
+# Monitoring Playbook - Phase 5
+# Installs Prometheus and Grafana on the first EC2 instance.
+# Access via SSM port forwarding from your laptop.
+# ============================================================
+
+# Step 1: Cluster-wide Fact Gathering Play
+- name: Gather system facts from all managed application nodes
+  hosts: all
+  gather_facts: true
+  become: true
+
+# Step 2: Main Monitoring Installation Play
+- name: Install monitoring stack on first app server
+  hosts: "{{ (groups['all'] | sort | first) }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    prometheus_version: "2.51.0"
+
+  pre_tasks:
+    - name: Gather private IPs of all app servers into a clean list
+      ansible.builtin.set_fact:
+        all_private_ips: "{{ groups['all'] | map('extract', hostvars, 'ansible_default_ipv4') | map(attribute='address') | list }}"
+
+  tasks:
+
+    # ============================================================
+    # Prometheus
+    # ============================================================
+    - name: Create Prometheus directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: nobody
+        group: nogroup
+        mode: '0755'
+      loop:
+        - /etc/prometheus
+        - /var/lib/prometheus
+
+    - name: Download Prometheus binary
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+        dest: /tmp/prometheus.tar.gz
+        mode: '0644'
+
+    - name: Extract Prometheus
+      ansible.builtin.unarchive:
+        src: /tmp/prometheus.tar.gz
+        dest: /tmp
+        remote_src: true
+
+    - name: Install Prometheus binaries
+      ansible.builtin.copy:
+        src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        remote_src: true
+        mode: '0755'
+      loop:
+        - prometheus
+        - promtool
+
+    - name: Deploy Prometheus main configuration
+      ansible.builtin.copy:
+        dest: /etc/prometheus/prometheus.yml
+        owner: nobody
+        group: nogroup
+        mode: '0644'
+        content: |
+          global:
+            scrape_interval: 15s
+            evaluation_interval: 15s
+            external_labels:
+              project: drupal-aws
+              environment: production
+
+          rule_files:
+            - /etc/prometheus/alerts.yml
+
+          scrape_configs:
+            - job_name: prometheus
+              static_configs:
+                - targets:
+                    - localhost:9090
+
+            - job_name: node_exporter
+              static_configs:
+                - targets:
+          {{ all_private_ips | map('regex_replace', '$', ':9100') | to_yaml | indent(10, first=True) }}
+              relabel_configs:
+                - source_labels: [__address__]
+                  target_label: instance
+                  regex: "([^:]+):.*"
+                  replacement: "${1}"
+
+    - name: Write Prometheus alerts config
+      ansible.builtin.copy:
+        dest: /etc/prometheus/alerts.yml
+        owner: nobody
+        group: nogroup
+        mode: '0644'
+        content: |
+          groups:
+            - name: drupal-aws-alerts
+              rules:
+
+                - alert: HighCPUUsage
+                  expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+                  for: 5m
+                  labels:
+                    severity: warning
+                  annotations:
+                    summary: >
+                      High CPU on {{ '$labels.instance' }}
+                    description: >
+                      CPU above 80%. Value: {{ '$value' }}%
+
+                - alert: CriticalCPUUsage
+                  expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 95
+                  for: 2m
+                  labels:
+                    severity: critical
+                  annotations:
+                    summary: >
+                      Critical CPU on {{ '$labels.instance' }}
+
+                - alert: HighMemoryUsage
+                  expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+                  for: 5m
+                  labels:
+                    severity: warning
+                  annotations:
+                    summary: >
+                      High memory on {{ '$labels.instance' }}
+
+                - alert: DiskSpaceLow
+                  expr: (1 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})) * 100 > 80
+                  for: 5m
+                  labels:
+                    severity: warning
+                  annotations:
+                    summary: >
+                      Disk low on {{ '$labels.instance' }}
+
+                - alert: InstanceDown
+                  expr: up == 0
+                  for: 1m
+                  labels:
+                    severity: critical
+                  annotations:
+                    summary: >
+                      Instance {{ '$labels.instance' }} is down
+
+    - name: Create Prometheus systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/prometheus.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Prometheus Monitoring
+          After=network.target
+
+          [Service]
+          User=nobody
+          ExecStart=/usr/local/bin/prometheus \
+            --config.file=/etc/prometheus/prometheus.yml \
+            --storage.tsdb.path=/var/lib/prometheus \
+            --storage.tsdb.retention.time=7d \
+            --web.listen-address=0.0.0.0:9090
+          Restart=on-failure
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Validate Prometheus config before starting
+      ansible.builtin.command: promtool check config /etc/prometheus/prometheus.yml
+      become: true
+      changed_when: false
+
+    - name: Start and enable Prometheus
+      ansible.builtin.systemd:
+        name: prometheus
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    # ============================================================
+    # Grafana
+    # ============================================================
+    - name: Add Grafana GPG key
+      ansible.builtin.apt_key:
+        url: https://apt.grafana.com/gpg.key
+        state: present
+
+    - name: Add Grafana repository
+      ansible.builtin.apt_repository:
+        repo: "deb https://apt.grafana.com stable main"
+        state: present
+
+    - name: Install Grafana
+      ansible.builtin.apt:
+        name: grafana
+        state: present
+        update_cache: true
+
+    - name: Start and enable Grafana
+      ansible.builtin.systemd:
+        name: grafana-server
+        state: started
+        enabled: true
+
+    - name: Wait for Grafana to be ready
+      ansible.builtin.uri:
+        url: http://localhost:3000/api/health
+        status_code: 200
+      register: grafana_health
+      retries: 15
+      delay: 5
+      until: grafana_health.status == 200
+
+    - name: Add Prometheus as Grafana datasource
+      ansible.builtin.uri:
+        url: http://localhost:3000/api/datasources
+        method: POST
+        user: admin
+        password: admin
+        force_basic_auth: true
+        body_format: json
+        body:
+          name: Prometheus
+          type: prometheus
+          url: http://localhost:9090
+          access: proxy
+          isDefault: true
+        status_code: [200, 409]
+
+    - name: Show SSM port forwarding commands
+      ansible.builtin.debug:
+        msg:
+          - "Monitoring installed on {{ inventory_hostname }}"
+          - ""
+          - "Run these in two separate terminals on your laptop:"
+          - ""
+          - "Terminal 1 - Grafana:"
+          - "aws ssm start-session --target {{ inventory_hostname }} --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"3000\"],\"localPortNumber\":[\"3000\"]}'"
+          - ""
+          - "Terminal 2 - Prometheus:"
+          - "aws ssm start-session --target {{ inventory_hostname }} --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"9090\"],\"localPortNumber\":[\"9090\"]}'"
+          - ""
+          - "Then open:"
+          - "  Grafana:    http://localhost:3000  (admin/admin)"
+          - "  Prometheus: http://localhost:9090"

@@ -74,12 +74,30 @@ resource "aws_security_group" "app" {
   }
 
   ingress {
-    description = "Prometheus node exporter from your admin IP only"
-    from_port   = 9100
-    to_port     = 9100
+    description = "Grafana web UI from admin IP only"
+    from_port   = 3000
+    to_port     = 3000
     protocol    = "tcp"
     cidr_blocks = [var.admin_ip_cidr]
   }
+
+  # --- PROMETHEUS FIX: SPLIT INTO TWO DISTINCT BLOCKS ---
+  ingress {
+    description = "Prometheus node exporter from your admin IP only"
+    from_port   = 9100
+    to_port     = 9113
+    protocol    = "tcp"
+    cidr_blocks = [var.admin_ip_cidr] # Handles your external machine
+  }
+
+  ingress {
+    description = "Prometheus node exporter from app servers within this SG"
+    from_port   = 9100
+    to_port     = 9113
+    protocol    = "tcp"
+    self        = true               # Handles internal cluster scraping safely
+  }
+  # ------------------------------------------------------
 
   ingress {
     description = "rsync between app servers within the security group itself"
