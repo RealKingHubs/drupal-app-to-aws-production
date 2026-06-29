@@ -107,7 +107,7 @@ drupal-aws-infra/
 │   ├── prometheus/prometheus.yml   # Prometheus scrape config
 │   └── prometheus/alerts.yml       # Alert rules
 └── docs/
-    ├── screenshots/
+    ├── envidence/
     ├── 01-architecture.md
     ├── 02-troubleshooting-log.md
     └── 03-phase2-setup.md
